@@ -1,28 +1,33 @@
 "use client";
 
 /**
- * 全站 3D 空间 —— 推门进入的八房大厅
+ * 全站 3D 空间 —— 星系
  * ---------------------------------------------------------------------------
- * 页面上每一个区块 = 大厅里的一间房，8 间均分一圈（每 45° 一间）：
+ * 页面上每一个区块 = 星系里的一颗行星，8 颗均分一圈（每 45° 一颗），
+ * 中央是一颗恒星。默认视角站在星系外侧俯视，8 颗行星连同名字**一眼全在画面里**；
+ * 点某颗行星（或它的名牌）→ 镜头飞过去，停在那颗行星的解说板前。
  *
- *   大厅 → 作品房 → 实践房 → 证书房 → 关于房 → 经历房 → 技能房 → 联系房
+ *   启程星 → 作品星 → 实践星 → 证书星 → 关于星 → 经历星 → 技能星 → 联系星
  *
- * 中央是八角门厅，8 扇门各挂一块房名牌（DOM 投影上去，中文清晰、键盘可聚焦）。
- * 点门或点房名牌 → 镜头先转向那扇门 → 门往房间里推开 → 走过去穿过门洞 →
- * 停在那间房外墙上的解说板前，板子 1:1 铺在正前方。
+ * 相机立足点为什么必须在系统外面
+ * ---------------------------------------------------------------------------
+ * 早先的门厅版本把相机放在厅心、朝外看，45° 视角里最多只能同时看到 2~3 扇门 ——
+ * 「一眼看到所有星球」这件事在那个立足点上做不到，不是换个模型能解决的。
+ * 所以这一版把相机移到系统外侧、俯视 31.5°，整圈星轨才落进画面。
  *
- * 每个区块的正文就是那间房墙上的「解说板」—— DOM 里那块 .board，不是浮在
- * 页面上方的卡片。每帧把这块板在空间里的平面投影到屏幕上，再把
- * translate/scale 写回元素。所以正文只有一份：不会出现「正文和 3D 各显示
- * 一遍」的重影，中文清晰、可选中、可点、可被搜索。
+ * 每一颗行星的解说板
+ * ---------------------------------------------------------------------------
+ * 停靠后，那间房的正文（DOM 里那块 .board）被投影到行星外侧的平面上，1:1 铺在
+ * 正前方。投影这一套逻辑是沿用门厅版本的：每帧把锚点的世界坐标投到屏幕，再用
+ * 板顶的投影反推 scale，写回 translate3d + scale。正文因此仍然只有一份 ——
+ * 字可选中、可点、可被搜索。
  *
- * 导航不再是滚动：
- *   · 门厅里滚轮左右转，看清 8 扇门；
- *   · 站内所有指着房间的 # 锚点由本组件统一拦截（导航栏、Hero 按钮都能用）；
- *   · 命令面板走 lib/spatial.ts 的 enterRoom；
- *   · 房间里底部有「上一间 / 回到门厅 / 下一间」。
+ * 一个必须说明的取舍：停靠时板上内容占满画面，那颗行星就在板子正后方
+ * （行星半径算过，正好比板子矮一档，不会从板子边缘露出来）。也就是说
+ * 「到达」那一刻你看的是内容，不是星球 —— 星球是星图上的主角，飞行途中也看得到。
+ * 如果想让行星和板子同框，就得把板子缩到约六成、正文跟着变小，那是另一套取舍。
  *
- * 窄屏 / 系统开启「减少动态效果」/ 不支持 WebGL 时整层退回静态渐变，
+ * 窄屏 / 系统开启「减少动态效果」/ 不支持 WebGL 时整层退回静态背景，
  * 摘掉 html.spatial-on，区块回到普通文档流，页面照常可读可点、也能滚动。
  * ---------------------------------------------------------------------------
  */
@@ -31,20 +36,21 @@ import {
   Component,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
 } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
-import { FaArrowLeft, FaArrowRight, FaDoorOpen } from "react-icons/fa6";
+import { FaArrowLeft, FaArrowRight, FaRocket } from "react-icons/fa6";
 
 import { registerRoomEnter } from "@/lib/spatial";
 import { roomBlurbs } from "@/data";
 
-/* ============================== 空间尺寸表 ============================== */
+/* ============================== 星系尺寸表 ============================== */
 
-const SPACE_COLOR = "#05071f";
+const SPACE_COLOR = "#04061a";
 
 /** 解说板：DOM 里那块是 1000×600，在空间里高 5.8 个世界单位 */
 const BOARD_PX_W = 1000;
@@ -52,57 +58,46 @@ const BOARD_PX_H = 600;
 const BOARD_H = 5.8;
 const BOARD_W = (BOARD_H * BOARD_PX_W) / BOARD_PX_H;
 
-/** 相机视高 */
+/** 相机视高。解说板中心也放在这个高度，板子和视线齐平 */
 const EYE = 2.4;
-/** 层高 */
-const CEIL_H = 6.6;
+const BOARD_MID_Y = EYE;
 
-/** 门厅：正八边形的内切半径。边长 ≈ 12.0，正好等于房宽，接缝才不会有缺口 */
-const R_HUB = 14.5;
-/** 房间宽度，和门厅的边长对齐 */
-const ROOM_W = 12.0;
-/** 房间外沿：从门厅墙往外 16 个单位 */
-const R_OUT = 30.5;
+/** 星轨半径：8 颗行星均分一圈 */
+const R_ORBIT = 26;
+/** 恒星半径 */
+const SUN_R = 3.0;
 
-/** 板面离圆心的距离，以及板底离地高度 */
-const BOARD_R = R_OUT - 0.55;
-const BOARD_BOTTOM = 0.5;
-const BOARD_MID_Y = BOARD_BOTTOM + BOARD_H / 2;
-
-/** 相机停靠点离圆心的距离。这个距离下 1000×600 投影出来接近 1:1 */
-const DOCK_DIST = 10.1;
+/** 解说板锚点离星系中心的距离 */
+const BOARD_R = 30;
+/** 停靠时相机离板面的距离。这个距离下 1000×600 正好 1:1 铺满 */
+const DOCK_DIST = 10.5;
 const DOCK_R = BOARD_R - DOCK_DIST;
 
-/** 门洞尺寸 */
-const DOOR_W = 3.4;
-const DOOR_H = 4.3;
-/** 房名牌：抬到门楣上方多高，以及在空间里做多高（世界单位）。
-    牌子是两行（房名 + 一句话概括），所以比单行牌子高一档。 */
-const PLATE_LIFT = 0.95;
-const PLATE_WORLD_H = 0.95;
+/** 星图视角：站在系统外侧俯视。俯角换算成弧度。
+    距离取 66 而不是刚好装下：再近的话，正下方那颗最近的行星会被屏幕下边缘切掉。 */
+const MAP_DIST = 66;
+const MAP_ELEV = 0.55;
+const MAP_HORIZ = Math.cos(MAP_ELEV) * MAP_DIST;
+const MAP_HEIGHT = Math.sin(MAP_ELEV) * MAP_DIST;
 
-/** 门厅墙的边长（正八边形）。八边形外接半径要按这个反推，地面才和墙严丝合缝 */
-const HUB_SIDE = 2 * R_HUB * Math.tan(Math.PI / 8);
-const HUB_CIRCUM = R_HUB / Math.cos(Math.PI / 8);
+/** 星图的视线落点，压在星系中心**下方**一点 ——
+    这样整圈星轨在画面里往上挪，最近那颗行星不会贴到屏幕底边 */
+const MAP_LOOK = new THREE.Vector3(0, -2.5, 0);
 
-/** 走一段路要多久、转身要多久 */
-const WALK_SECONDS = 2.6;
-const TURN_SECONDS = 0.7;
+/** 行星名牌：抬到球心上方多高 */
+const PLATE_LIFT = 3.6;
 
-const COL = {
-  floor: "#161d4d",
-  hubFloor: "#1a2258",
-  wall: "#141a44",
-  ceil: "#121746",
-  door: "#1b2461",
-  frame: "#2f7ff0",
-  stud: "#ffcf00",
-};
+/** 两条飞行时间：图上飞过去，和在两颗行星之间跳 */
+const FLY_SECONDS = 2.6;
+const HOP_SECONDS = 4.4;
 
 /**
- * 8 间房。id 同时是 DOM 里 [data-board="…"] 的值，顺序必须和
- * app/page.tsx 里 8 个区块的顺序一致，否则房名会和墙上的正文对不上。
+ * 8 颗行星。id 同时是 DOM 里 [data-board="…"] 的值，顺序必须和
+ * app/page.tsx 里 8 个区块的顺序一致，否则星名会和板上的正文对不上。
  * accent 也要和 globals.css 里 .board[data-board="…"] 的 --board-accent 保持一致。
+ *
+ * 半径都压在 1.48~1.74：停靠时行星在相机正前方 6.5 个单位处，这个尺寸下
+ * 它在屏幕上比 600px 高的板子矮一档，正好被板子挡住，不会从边缘露出来。
  */
 type Room = {
   id: string;
@@ -112,314 +107,337 @@ type Room = {
 };
 
 const ROOMS: Room[] = [
-  { id: "hero", label: "大厅", accent: "#ffcf00" },
-  { id: "projects", label: "作品房", accent: "#2f7ff0" },
-  { id: "approach", label: "实践房", accent: "#ff8a00" },
-  { id: "certs", label: "证书房", accent: "#00a3da" },
-  { id: "about", label: "关于房", accent: "#b0e01a" },
-  { id: "experience", label: "经历房", accent: "#e5007d" },
-  { id: "skills", label: "技能房", accent: "#25a745" },
-  { id: "contact", label: "联系房", accent: "#e3000b" },
+  { id: "hero", label: "启程星", accent: "#ffcf00" },
+  { id: "projects", label: "作品星", accent: "#2f7ff0" },
+  { id: "approach", label: "实践星", accent: "#ff8a00" },
+  { id: "certs", label: "证书星", accent: "#00a3da" },
+  { id: "about", label: "关于星", accent: "#b0e01a" },
+  { id: "experience", label: "经历星", accent: "#e5007d" },
+  { id: "skills", label: "技能星", accent: "#25a745" },
+  { id: "contact", label: "联系星", accent: "#e3000b" },
 ].map((room, i) => ({ ...room, angle: (i * Math.PI * 2) / 8 }));
+
+/** 每颗行星的体型：半径、是否带星环、自转快慢 */
+const SHAPES = [
+  { r: 1.6, ring: false, spin: 0.1 },
+  { r: 1.74, ring: true, spin: 0.16 },
+  { r: 1.5, ring: false, spin: 0.22 },
+  { r: 1.62, ring: false, spin: 0.13 },
+  { r: 1.56, ring: true, spin: 0.19 },
+  { r: 1.7, ring: false, spin: 0.11 },
+  { r: 1.48, ring: false, spin: 0.24 },
+  { r: 1.66, ring: false, spin: 0.15 },
+];
 
 const roomIndex = (id: string) => ROOMS.findIndex((r) => r.id === id);
 
-/** 镜头这一帧站在哪：0 = 门厅，1 = 停在该房板子前 */
+/** 三个常用位置，都是纯函数，随取随算 */
+const dirOf = (i: number) =>
+  new THREE.Vector3(Math.sin(ROOMS[i].angle), 0, Math.cos(ROOMS[i].angle));
+const planetPos = (i: number) => dirOf(i).multiplyScalar(R_ORBIT);
+/** 行星正上方挂着解说板，停靠时相机把它摆到画面正中 */
+const boardAnchor = (i: number) =>
+  dirOf(i).multiplyScalar(BOARD_R).setY(BOARD_MID_Y);
+/** 停靠点：沿这颗行星的方位往外，比板面近 10.5 个单位 */
+const dockPos = (i: number) => dirOf(i).multiplyScalar(DOCK_R).setY(EYE);
+/** 星图视角的位置，由方位角决定 */
+const mapPos = (azimuth: number) =>
+  new THREE.Vector3(
+    Math.sin(azimuth) * MAP_HORIZ,
+    MAP_HEIGHT,
+    Math.cos(azimuth) * MAP_HORIZ
+  );
+
+/** 缓动：两头慢中间快，用来插值飞行路径 */
+const ease = (x: number) => x * x * (3 - 2 * x);
+
+/** 镜头这一帧的状态 */
 type View = {
-  progress: number;
-  hubYaw: number;
-  /** 正在走向哪间房；-1 表示在门厅 */
+  /** 正在前往哪颗行星；-1 表示停在星图上 */
   target: number;
+  /** 0 = 刚出发，1 = 已抵达 */
+  progress: number;
+  /** 星图的方位角，滚轮改变它 */
+  azimuth: number;
 };
 
-/* ---------------------------- 几个基础件 ---------------------------- */
+/** 一次飞行的路径。via 为空就是直飞，有 via 就从星图上方绕一下 */
+type Flight = {
+  active: boolean;
+  t: number;
+  dur: number;
+  fromP: THREE.Vector3;
+  toP: THREE.Vector3;
+  viaP: THREE.Vector3 | null;
+  fromL: THREE.Vector3;
+  toL: THREE.Vector3;
+  viaL: THREE.Vector3 | null;
+  toRoom: number;
+};
 
-const Slab = ({
-  position,
-  size,
-  color,
-}: {
-  position: [number, number, number];
-  size: [number, number, number];
-  color: string;
-}) => (
-  <mesh position={position}>
-    <boxGeometry args={size} />
-    <meshStandardMaterial color={color} roughness={0.9} metalness={0.02} flatShading />
-  </mesh>
-);
-
-/** 顶上一颗凸点 —— 乐高的「stud」 */
-const Stud = ({
-  position,
-  color,
-}: {
-  position: [number, number, number];
-  color: string;
-}) => (
-  <mesh position={position}>
-    <cylinderGeometry args={[0.16, 0.16, 0.14, 10]} />
-    <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.35} roughness={0.6} />
-  </mesh>
-);
-
-/** 发光的细条：门框、腰线、地面导引线都用它 */
-const GlowBar = ({
-  position,
-  size,
-  color,
-  dim = false,
-}: {
-  position: [number, number, number];
-  size: [number, number, number];
-  color: string;
-  dim?: boolean;
-}) => (
-  <mesh position={position}>
-    <boxGeometry args={size} />
-    <meshStandardMaterial
-      color={color}
-      emissive={color}
-      emissiveIntensity={dim ? 0.5 : 1.6}
-      toneMapped={false}
-    />
-  </mesh>
-);
-
-/* ---------------------------- 门厅 ---------------------------- */
+/* ---------------------------- 基础件 ---------------------------- */
 
 /**
- * 门厅：正八边形的地和顶，加上厅心的灯槽。
- * 八面墙由 8 个房间各自的门墙拼成（见 RoomShell），这里不重复建。
+ * 星场：两千多颗星星铺在一层球壳上。
+ * 自己写而不是引第三方组件，是因为这点代码很短，而且能直接控制颜色与大小 ——
+ * sizeAttenuation 关掉之后，星星在屏幕上就是恒定大小的点，不随距离缩成一片糊。
  */
-const Hub = () => (
-  <group>
-    {/* 八角地面。用八棱柱而不是方块 —— 方块的四角会伸进房间里，
-        和房间地板共面打架（z-fighting 闪烁）。 */}
-    <mesh position={[0, -0.1, 0]} rotation={[0, Math.PI / 8, 0]}>
-      <cylinderGeometry args={[HUB_CIRCUM, HUB_CIRCUM, 0.2, 8]} />
-      <meshStandardMaterial color={COL.hubFloor} roughness={0.9} flatShading />
-    </mesh>
-    {/* 厅心的两圈地纹，一眼看出这是个门厅 */}
-    <mesh position={[0, 0.012, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-      <ringGeometry args={[4.2, 4.42, 64]} />
-      <meshBasicMaterial color="#ffcf00" toneMapped={false} />
-    </mesh>
-    <mesh position={[0, 0.012, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-      <ringGeometry args={[9.0, 9.16, 64]} />
-      <meshBasicMaterial color="#3a4790" toneMapped={false} />
-    </mesh>
-    {/* 八角顶 */}
-    <mesh position={[0, CEIL_H, 0]} rotation={[0, Math.PI / 8, 0]}>
-      <cylinderGeometry args={[HUB_CIRCUM, HUB_CIRCUM, 0.2, 8]} />
-      <meshStandardMaterial color={COL.ceil} roughness={0.95} flatShading />
-    </mesh>
-    {/* 厅心的顶灯 */}
-    <mesh position={[0, CEIL_H - 0.16, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-      <ringGeometry args={[1.6, 2.6, 40]} />
-      <meshBasicMaterial color="#c8d4ff" toneMapped={false} />
-    </mesh>
-  </group>
-);
+const Starfield = () => {
+  const [pos, col] = useMemo(() => {
+    const N = 2400;
+    const p = new Float32Array(N * 3);
+    const c = new Float32Array(N * 3);
+    const tints = ["#ffffff", "#cfe0ff", "#ffe6c0", "#bcd4ff"];
+    for (let i = 0; i < N; i++) {
+      // 球壳上均匀取点：先取 y 方向余弦，再取经度，才不会在两极堆成一团
+      const u = Math.random() * 2 - 1;
+      const theta = Math.random() * Math.PI * 2;
+      const r = 95 + Math.random() * 80;
+      const s = Math.sqrt(1 - u * u);
+      p[i * 3] = Math.sin(theta) * s * r;
+      p[i * 3 + 1] = u * r;
+      p[i * 3 + 2] = Math.cos(theta) * s * r;
 
-/* ---------------------------- 一间房 ---------------------------- */
-
-/**
- * 一个房间：门厅那面带门洞的墙 + 房间外壳 + 尽头墙上的板框。
- * 整个 group 绕 y 轴转到自己的方位角上，局部 +z 就是「由厅心指向外」——
- * 注意朝门厅是 −z，门扇上的把手和灯条都得放在负侧，否则会被门扇自己挡住。
- */
-const RoomShell = ({ room }: { room: Room }) => {
-  const segW = (HUB_SIDE - DOOR_W) / 2;
-  const segX = DOOR_W / 2 + segW / 2;
-  const zc = (R_HUB + R_OUT) / 2;
-  const zl = R_OUT - R_HUB;
+      const tint = new THREE.Color(tints[(Math.random() * tints.length) | 0]);
+      const k = 0.45 + Math.random() * 0.55;
+      c[i * 3] = tint.r * k;
+      c[i * 3 + 1] = tint.g * k;
+      c[i * 3 + 2] = tint.b * k;
+    }
+    return [p, c];
+  }, []);
 
   return (
-    <group rotation={[0, room.angle, 0]}>
-      {/* 门厅这面墙：左右两段 + 门楣，中间是门洞。
-          墙面一律不给 accent 自发光 —— 高饱和的强调色一旦大面积铺在墙上，
-          深蓝底会被染成土黄，像旧墙皮。颜色只留在灯条上做点缀。 */}
-      {[-1, 1].map((s) => (
-        <Slab
-          key={s}
-          position={[s * segX, CEIL_H / 2, R_HUB]}
-          size={[segW, CEIL_H, 0.6]}
-          color={COL.wall}
-        />
-      ))}
-      <Slab
-        position={[0, DOOR_H + (CEIL_H - DOOR_H) / 2, R_HUB]}
-        size={[DOOR_W, CEIL_H - DOOR_H, 0.6]}
-        color={COL.wall}
+    <points>
+      <bufferGeometry>
+        <bufferAttribute attach="attributes-position" args={[pos, 3]} />
+        <bufferAttribute attach="attributes-color" args={[col, 3]} />
+      </bufferGeometry>
+      <pointsMaterial
+        size={1.5}
+        sizeAttenuation={false}
+        vertexColors
+        transparent
+        opacity={0.95}
+        depthWrite={false}
       />
-      {/* 门框发光条 */}
-      <GlowBar
-        position={[-DOOR_W / 2, DOOR_H / 2, R_HUB - 0.34]}
-        size={[0.12, DOOR_H, 0.12]}
-        color={COL.frame}
-      />
-      <GlowBar
-        position={[DOOR_W / 2, DOOR_H / 2, R_HUB - 0.34]}
-        size={[0.12, DOOR_H, 0.12]}
-        color={COL.frame}
-      />
-      <GlowBar
-        position={[0, DOOR_H, R_HUB - 0.34]}
-        size={[DOOR_W, 0.12, 0.12]}
-        color={COL.frame}
-      />
-      {/* 门槛：一道横在门口的亮线，指明从这儿进 */}
-      <GlowBar position={[0, 0.03, R_HUB]} size={[DOOR_W, 0.06, 0.5]} color={COL.stud} />
-      {[-1.2, 0, 1.2].map((x) => (
-        <Stud key={x} position={[x, CEIL_H + 0.12, R_HUB]} color={COL.stud} />
-      ))}
-
-      {/* 房间的地、顶、两侧墙、尽头墙 */}
-      <Slab position={[0, -0.1, zc]} size={[ROOM_W, 0.2, zl]} color={COL.floor} />
-      <Slab position={[0, CEIL_H, zc]} size={[ROOM_W, 0.2, zl]} color={COL.ceil} />
-      {[-1, 1].map((s) => (
-        <Slab
-          key={s}
-          position={[(s * ROOM_W) / 2 + s * 0.3, CEIL_H / 2, zc]}
-          size={[0.6, CEIL_H, zl]}
-          color={COL.wall}
-        />
-      ))}
-      <Slab
-        position={[0, CEIL_H / 2, R_OUT + 0.3]}
-        size={[ROOM_W, CEIL_H, 0.6]}
-        color={COL.wall}
-      />
-      {/* 房间顶上的灯槽 */}
-      {[-3.4, 3.4].map((x) => (
-        <GlowBar
-          key={x}
-          position={[x, CEIL_H - 0.12, zc]}
-          size={[0.1, 0.06, zl - 3]}
-          color="#5a6bb5"
-          dim
-        />
-      ))}
-      {/* 地面导引线：从门口铺到板子前 */}
-      <GlowBar
-        position={[0, 0.012, R_HUB + 6]}
-        size={[0.09, 0.03, zl - 5]}
-        color={room.accent}
-      />
-      <mesh position={[0, 0.015, R_HUB + 7.5]} rotation={[-Math.PI / 2, 0, 0]}>
-        <ringGeometry args={[3.4, 3.56, 44]} />
-        <meshBasicMaterial color={room.accent} toneMapped={false} />
-      </mesh>
-
-      {/* 尽头墙上的色带 + 凸点，标出这间房的颜色 */}
-      <GlowBar
-        position={[0, 5.95, R_OUT + 0.04]}
-        size={[ROOM_W - 2.4, 0.13, 0.08]}
-        color={room.accent}
-      />
-      {[-3.4, 0, 3.4].map((x) => (
-        <Stud key={x} position={[x, CEIL_H + 0.12, R_OUT + 0.1]} color={room.accent} />
-      ))}
-
-      {/* 解说板的板框与底座：DOM 那块板就贴在这一层上 */}
-      <mesh position={[0, BOARD_MID_Y, BOARD_R - 0.2]}>
-        <boxGeometry args={[BOARD_W + 0.4, BOARD_H + 0.4, 0.3]} />
-        <meshStandardMaterial
-          color={room.accent}
-          emissive={room.accent}
-          emissiveIntensity={0.32}
-          roughness={0.85}
-          flatShading
-        />
-      </mesh>
-      <Slab
-        position={[0, BOARD_BOTTOM / 2, BOARD_R - 0.2]}
-        size={[BOARD_W + 1.1, BOARD_BOTTOM, 1.4]}
-        color="#141a44"
-      />
-    </group>
+    </points>
   );
 };
 
 /**
- * 门扇。铰链在门洞左边，开度由外部每帧写进来 ——
- * 跟着镜头位置走，不是跟着「点没点」走，这样才有「推开」的过程。
+ * 辉光贴图。运行时用 canvas 画一张径向渐变，不占素材体积。
+ * 做成模块级单例：9 处辉光共用同一张，不必各建一份。
+ *
+ * 为什么不用同心球壳堆光晕 —— 那样堆出来是几道可见的环带，像靶子；
+ * 径向渐变的 sprite 永远是正对相机的柔和光斑，从任何角度看都对。
  */
-const Door = ({
+let glowTexture: THREE.Texture | null = null;
+const getGlowTexture = () => {
+  if (glowTexture) return glowTexture;
+  if (typeof document === "undefined") return null;
+
+  const size = 256;
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
+
+  const g = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  g.addColorStop(0, "rgba(255,255,255,0.95)");
+  g.addColorStop(0.22, "rgba(255,255,255,0.62)");
+  g.addColorStop(0.5, "rgba(255,255,255,0.18)");
+  g.addColorStop(0.78, "rgba(255,255,255,0.05)");
+  g.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, size, size);
+
+  glowTexture = new THREE.CanvasTexture(canvas);
+  glowTexture.colorSpace = THREE.SRGBColorSpace;
+  return glowTexture;
+};
+
+/**
+ * 一团辉光。size 是整个光斑的直径 —— 球体的轮廓只占中间那一小块，
+ * 露在外面的部分正好是渐变由亮转透的那一圈，所以看起来是「球在发光」。
+ */
+const Glow = ({
+  color,
+  size,
+  opacity = 1,
+}: {
+  color: string;
+  size: number;
+  opacity?: number;
+}) => {
+  const tex = getGlowTexture();
+  if (!tex) return null;
+  return (
+    <sprite scale={[size, size, 1]}>
+      <spriteMaterial
+        map={tex}
+        color={color}
+        transparent
+        opacity={opacity}
+        blending={THREE.AdditiveBlending}
+        depthWrite={false}
+        toneMapped={false}
+      />
+    </sprite>
+  );
+};
+
+/**
+ * 行星表面贴图。4 张抽象图案，靠「灰度图案 × 各自本色」着色 ——
+ * 8 颗行星因此是 8 种配色，素材却只有 4 张（合计约 330KB）。
+ * 模块级缓存：两颗行星用到同一张时，不重复下载、不重复解码。
+ */
+const TEX_URLS = [
+  "/space/planet-bands.jpg",
+  "/space/planet-swirl.jpg",
+  "/space/planet-cracks.jpg",
+  "/space/planet-facets.jpg",
+];
+
+const texCache = new Map<string, THREE.Texture>();
+
+const useSpaceTexture = (url: string) => {
+  const [tex, setTex] = useState<THREE.Texture | null>(null);
+
+  useEffect(() => {
+    const hit = texCache.get(url);
+    if (hit) {
+      setTex(hit);
+      return;
+    }
+    let alive = true;
+    new THREE.TextureLoader().load(url, (t) => {
+      t.colorSpace = THREE.SRGBColorSpace;
+      t.wrapS = t.wrapT = THREE.RepeatWrapping;
+      /* 只取贴图中间约 40% 采样 ——
+         行星在星图上只有 50~60px 见方，整张 512 的纹样会被缩成一片糊，
+         放大 2.5 倍之后表面图案才认得出来 */
+      t.repeat.set(0.4, 0.4);
+      t.offset.set(0.3, 0.3);
+      texCache.set(url, t);
+      if (alive) setTex(t);
+    });
+    // 加载失败就不设 state：这颗行星退回纯色球，不拖垮整个场景
+    return () => {
+      alive = false;
+    };
+  }, [url]);
+
+  return tex;
+};
+
+/** 恒星。本体做得平滑，外面罩一团暖色辉光 */
+const Sun = () => (
+  <group>
+    <mesh>
+      <sphereGeometry args={[SUN_R, 40, 40]} />
+      <meshStandardMaterial
+        color="#fff2c8"
+        emissive="#ffcf4d"
+        emissiveIntensity={1.15}
+        roughness={0.5}
+        toneMapped={false}
+      />
+    </mesh>
+    <Glow color="#ffcf6a" size={SUN_R * 8.6} opacity={0.9} />
+  </group>
+);
+
+/** 星轨：一圈细环，把这 8 颗行星连成一条轨道 */
+const OrbitRing = () => (
+  <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.02, 0]}>
+    <ringGeometry args={[R_ORBIT - 0.06, R_ORBIT + 0.06, 160]} />
+    <meshBasicMaterial
+      color="#3c4b96"
+      transparent
+      opacity={0.75}
+      side={THREE.DoubleSide}
+      depthWrite={false}
+    />
+  </mesh>
+);
+
+/**
+ * 一颗行星。
+ * 本体是光滑球面 + 一张抽象表面贴图（灰度图案乘上本色着色）。为什么不用
+ * 低多边形棱面 —— 棱面上每个三角面只采一个点，贴图会碎成马赛克，看不出图案。
+ * 外面罩一团加色辉光做大气；个别带星环。
+ */
+const Planet = ({
   room,
-  openness,
+  index,
   onEnter,
 }: {
   room: Room;
-  openness: React.MutableRefObject<number[]>;
+  index: number;
   onEnter: (index: number) => void;
 }) => {
-  const index = roomIndex(room.id);
-  const ref = useRef<THREE.Group>(null);
+  const spin = useRef<THREE.Mesh>(null);
+  const shape = SHAPES[index];
+  /** 贴图按 0/1/2/3 轮着用 —— 8 颗行星两两同图案，靠配色拉开差异 */
+  const tex = useSpaceTexture(TEX_URLS[index % TEX_URLS.length]);
 
-  useFrame(() => {
-    if (ref.current) {
-      const open = openness.current[index] ?? 0;
-      /* 负角才是往房间那一侧推开。铰链在局部 x=0、门扇朝 +x 展开，而局部 +z
-         是「朝外」；绕 y 转 θ 会把自由端送到 −dx·sinθ 的 z 上 —— 取正角会
-         推向门厅，正好撞上进门的访客。 */
-      ref.current.rotation.y = -open * THREE.MathUtils.degToRad(96);
-    }
+  /** 行星本体颜色（贴图还没到位时先顶上）：强调色压暗，压太亮会盖掉恒星照出的明暗 */
+  const base = useMemo(
+    () =>
+      new THREE.Color(room.accent).lerp(new THREE.Color("#151d4a"), 0.62),
+    [room.accent]
+  );
+
+  useFrame((_, delta) => {
+    if (spin.current) spin.current.rotation.y += delta * shape.spin;
   });
 
   return (
-    <group rotation={[0, room.angle, 0]}>
-      <group position={[-DOOR_W / 2, 0, R_HUB]} ref={ref}>
-        <mesh
-          position={[DOOR_W / 2, DOOR_H / 2, 0]}
-          onClick={(e) => {
-            e.stopPropagation();
-            onEnter(index);
-          }}
-          onPointerOver={() => (document.body.style.cursor = "pointer")}
-          onPointerOut={() => (document.body.style.cursor = "")}
-        >
-          <boxGeometry args={[DOOR_W - 0.12, DOOR_H - 0.08, 0.18]} />
-          <meshStandardMaterial
-            color={COL.door}
-            emissive={room.accent}
-            /* 只留一丝自发光。给足会把整扇门染成强调色，看着不像门、像一堵墙 */
-            emissiveIntensity={0.05}
-            roughness={0.82}
-            flatShading
+    <group
+      position={planetPos(index)}
+      onClick={(e) => {
+        e.stopPropagation();
+        onEnter(index);
+      }}
+      onPointerOver={() => (document.body.style.cursor = "pointer")}
+      onPointerOut={() => (document.body.style.cursor = "")}
+    >
+      <mesh ref={spin} rotation={[0, 0, 0.14]}>
+        <sphereGeometry args={[shape.r, 48, 32]} />
+        {/* key 是关键：材质是「先无贴图、后补贴图」，而 three 只在材质创建时
+            决定要不要编译采样贴图的那套着色器 —— 中途把 map 塞进去，贴图不会生效。
+            所以贴图一到位就换一个 key，让这块材质整个重建，map 从创建那一刻就在。 */}
+        <meshStandardMaterial
+          key={tex ? "textured" : "plain"}
+          map={tex ?? undefined}
+          color={tex ? room.accent : base}
+          /* 同一张贴图再当一次自发光贴图 ——
+             行星在星图上只有五十来像素，光靠灯光照，纹样的明暗差会被压平；
+             让纹样用自己的本色发光，缩到再小也看得出表面是有东西的 */
+          emissive={room.accent}
+          emissiveMap={tex ?? undefined}
+          emissiveIntensity={tex ? 0.5 : 0.26}
+          roughness={0.72}
+          metalness={0.06}
+        />
+      </mesh>
+
+      {/* 大气辉光：一团对本色光斑，比球壳堆出来的柔和得多 */}
+      <Glow color={room.accent} size={shape.r * 4.6} opacity={0.66} />
+
+      {shape.ring && (
+        <mesh rotation={[-Math.PI / 2 + 0.34, 0, 0.42]}>
+          <ringGeometry args={[shape.r * 1.7, shape.r * 2.5, 64]} />
+          <meshBasicMaterial
+            color={room.accent}
+            transparent
+            opacity={0.42}
+            side={THREE.DoubleSide}
+            depthWrite={false}
           />
         </mesh>
-        {/* 门扇上下两道本色描边，让「这是一扇门」一眼成立 */}
-        <GlowBar
-          position={[DOOR_W / 2, DOOR_H - 0.14, -0.12]}
-          size={[DOOR_W - 0.4, 0.06, 0.05]}
-          color={room.accent}
-          dim
-        />
-        <GlowBar
-          position={[DOOR_W / 2, 0.16, -0.12]}
-          size={[DOOR_W - 0.4, 0.06, 0.05]}
-          color={room.accent}
-          dim
-        />
-        {/* 门把手：装在 −z（朝门厅）这一侧，来客才看得见 */}
-        <mesh position={[DOOR_W - 0.58, 1.95, -0.24]}>
-          <boxGeometry args={[0.16, 0.62, 0.16]} />
-          <meshStandardMaterial
-            color={COL.stud}
-            emissive={COL.stud}
-            emissiveIntensity={2.2}
-            toneMapped={false}
-          />
-        </mesh>
-        {/* 门面上一道竖灯，用这间房的颜色 */}
-        <GlowBar
-          position={[DOOR_W / 2, DOOR_H / 2, -0.14]}
-          size={[0.07, DOOR_H - 1.6, 0.05]}
-          color={room.accent}
-        />
-      </group>
+      )}
     </group>
   );
 };
@@ -427,49 +445,63 @@ const Door = ({
 /* ---------------------------- 相机 ---------------------------- */
 
 /**
- * 相机。门厅里站在厅心按 hubYaw 朝外看；走进房间时沿着自己的方位角直着往外走。
- * 位置一律由 (progress, target, hubYaw) 决定，没有自由漫游 —— 这样任何时刻
- * 都能算出确定的位置，不会出现「走到一半卡住」。
+ * 相机。三种状态都由确定的位置公式算出，没有自由漫游：
+ *   · 星图：站在系统外侧，绕方位角公转
+ *   · 停靠：沿这颗行星的方位，停在板面前方
+ *   · 飞行：在两个位置之间插值，中间可以经过星图上方绕一下
  */
-const Rig = ({ view }: { view: React.MutableRefObject<View> }) => {
+const Rig = ({
+  view,
+  flight,
+}: {
+  view: React.MutableRefObject<View>;
+  flight: React.MutableRefObject<Flight>;
+}) => {
   const { camera } = useThree();
-  const look = useRef(new THREE.Vector3(0, 2.2, R_HUB));
-  const want = useRef(new THREE.Vector3());
-  const dir = useRef(new THREE.Vector3());
+  const look = useRef(new THREE.Vector3().copy(MAP_LOOK));
+  const want = useRef(new THREE.Vector3().copy(MAP_LOOK));
+  const pos = useRef(new THREE.Vector3());
 
   useFrame((_, delta) => {
     const v = view.current;
+    const f = flight.current;
 
-    if (v.target < 0) {
-      camera.position.set(0, EYE, 0);
-      dir.current.set(Math.sin(v.hubYaw), 0, Math.cos(v.hubYaw));
-      want.current.copy(camera.position).addScaledVector(dir.current, R_HUB);
-      want.current.y = DOOR_H * 0.42;
+    if (f.active) {
+      const e = ease(Math.min(1, f.t));
+      if (f.viaP && f.viaL) {
+        /* 两颗行星之间跳：先抬到星图上方，再俯冲到目标。
+           直接连直线的话，视线要横跨半个星系甩过去，人会晕。 */
+        if (e < 0.5) {
+          const k = ease(e / 0.5);
+          pos.current.lerpVectors(f.fromP, f.viaP, k);
+          want.current.lerpVectors(f.fromL, f.viaL, k);
+        } else {
+          const k = ease((e - 0.5) / 0.5);
+          pos.current.lerpVectors(f.viaP, f.toP, k);
+          want.current.lerpVectors(f.viaL, f.toL, k);
+        }
+      } else {
+        pos.current.lerpVectors(f.fromP, f.toP, e);
+        want.current.lerpVectors(f.fromL, f.toL, e);
+      }
+      camera.position.copy(pos.current);
+    } else if (v.target < 0) {
+      camera.position.copy(mapPos(v.azimuth));
+      want.current.copy(MAP_LOOK);
     } else {
-      const room = ROOMS[v.target];
-      dir.current.set(Math.sin(room.angle), 0, Math.cos(room.angle));
-      const r = THREE.MathUtils.lerp(0, DOCK_R, v.progress);
-      camera.position.set(dir.current.x * r, EYE, dir.current.z * r);
-
-      // 先看门，穿过去之后改看板子 —— 视线也要跟着走
-      const doorY = DOOR_H * 0.42;
-      want.current.copy(dir.current).multiplyScalar(R_HUB);
-      want.current.y = doorY;
-      const boardPos = dir.current.clone().multiplyScalar(BOARD_R);
-      boardPos.y = BOARD_MID_Y;
-      want.current.lerp(
-        boardPos,
-        THREE.MathUtils.smoothstep(v.progress, 0.62, 0.92)
-      );
+      camera.position.copy(dockPos(v.target));
+      want.current.copy(boardAnchor(v.target));
     }
 
-    // 视线本身也缓一下，免得穿过门那一瞬镜头猛地一抬头
+    // 视线本身也缓一下，免得飞起来那一刻镜头猛地一甩
     look.current.lerp(want.current, 1 - Math.pow(0.0025, delta));
     camera.lookAt(look.current);
   });
 
   return null;
 };
+
+/* ---------------------------- 解说板的投影 ---------------------------- */
 
 type Stage = {
   el: HTMLElement | null;
@@ -479,9 +511,9 @@ type Stage = {
 };
 
 /**
- * 把 8 块解说板摆进各自的房间。
- * 每帧把板心的世界坐标投影到屏幕，再用板顶的投影反推 scale，写回
- * translate3d + scale。只有当前这间房的板子会淡入 ——
+ * 把 8 块解说板摆到各自行星的外侧。
+ * 每帧把锚点的世界坐标投影到屏幕，再用板顶的投影反推 scale，写回
+ * translate3d + scale。只有当前这颗行星的板子会淡入 ——
  * 否则会看到 8 块板同时糊在屏幕上。
  */
 const Boards = ({
@@ -500,15 +532,15 @@ const Boards = ({
   useFrame(({ camera, size }) => {
     const v = view.current;
 
-    ROOMS.forEach((room, i) => {
+    ROOMS.forEach((_, i) => {
       const s = stages.current[i];
       const el = s?.el;
       if (!el) return;
 
-      // 只有「正在走向的这间」、且已经走进去大半时，板子才露面
+      // 只有「正在飞向的这颗」、且快到了，板子才露面
       const wanted =
         v.target === i ? THREE.MathUtils.smoothstep(v.progress, 0.6, 0.95) : 0;
-      // 收的时候比放的时候快一点，避免换房时两块板同时可见
+      // 收的时候比放的时候快一点，避免换星球时两块板同时可见
       s.alpha += (wanted - s.alpha) * (wanted > s.alpha ? 0.12 : 0.28);
 
       if (s.alpha < 0.02) {
@@ -519,11 +551,7 @@ const Boards = ({
         return;
       }
 
-      world.current.set(
-        Math.sin(room.angle) * BOARD_R,
-        BOARD_MID_Y,
-        Math.cos(room.angle) * BOARD_R
-      );
+      world.current.copy(boardAnchor(i));
 
       proj.current.copy(world.current).project(camera);
       const cx = (proj.current.x * 0.5 + 0.5) * size.width;
@@ -556,144 +584,126 @@ const Boards = ({
 };
 
 /**
- * 房名牌：8 块真实 DOM 按钮，每帧被投影到各自门洞的上方。
+ * 行星名牌：8 块真实 DOM 按钮，每帧被投影到各自行星的上方。
  * 用 DOM 而不是 3D 文字，是因为中文字形在 3D 里要么糊、要么得额外加载字体；
- * 而且做成按钮之后键盘 Tab 也能走到，不会把键盘用户锁在门厅里。
+ * 而且做成按钮之后键盘 Tab 也能走到，不会把键盘用户困在星图上。
+ *
+ * 星图上 8 块牌子同在画面里，全靠缩放会挤成一团，所以这里用固定屏幕尺寸，
+ * 只按远近做 ±15% 的微调 —— 名牌是导航用的文字，该保持恒定可读。
  */
 const Plates = ({
   view,
+  flight,
   plates,
-  sizes,
+  hovered,
   onEnter,
 }: {
   view: React.MutableRefObject<View>;
+  flight: React.MutableRefObject<Flight>;
   plates: React.MutableRefObject<(HTMLElement | null)[]>;
-  sizes: React.MutableRefObject<number[]>;
+  hovered: number | null;
   onEnter: (index: number) => void;
 }) => {
   const proj = useRef(new THREE.Vector3());
-  const unit = useRef(new THREE.Vector3());
-  const fwd = useRef(new THREE.Vector3());
   const world = useRef(new THREE.Vector3());
   const dir = useRef(new THREE.Vector3());
 
   useFrame(({ camera, size }) => {
     const v = view.current;
-    camera.getWorldDirection(fwd.current);
+    const inMap = v.target < 0 && !flight.current.active;
 
     ROOMS.forEach((room, i) => {
       const el = plates.current[i];
       if (!el) return;
 
-      dir.current.set(Math.sin(room.angle), 0, Math.cos(room.angle));
-      world.current.copy(dir.current).multiplyScalar(R_HUB);
-      world.current.y = DOOR_H + PLATE_LIFT;
-
-      // 只在门厅里、且这扇门确实在镜头前方时显示。
-      // 不做这层剔除的话，背后那几扇门的牌子会翻过来糊在屏幕上。
-      const toDoor = world.current.clone().sub(camera.position).normalize();
-      const facing = toDoor.dot(fwd.current);
-      const inHub = v.target < 0 && v.progress <= 0.02;
-      const alpha = inHub
-        ? THREE.MathUtils.smoothstep(facing, 0.42, 0.72)
-        : 0;
-
+      const alpha = inMap ? 1 : 0;
       const prev = Number(el.dataset.alpha ?? "0");
       const next = prev + (alpha - prev) * 0.16;
       el.dataset.alpha = String(next);
       el.style.opacity = next.toFixed(3);
       el.style.visibility = next < 0.02 ? "hidden" : "visible";
       el.style.pointerEvents = next < 0.5 ? "none" : "auto";
-
       if (next < 0.02) return;
+
+      dir.current.set(Math.sin(room.angle), 0, Math.cos(room.angle));
+      world.current
+        .copy(dir.current)
+        .multiplyScalar(R_ORBIT)
+        .setY(PLATE_LIFT);
 
       proj.current.copy(world.current).project(camera);
       const cx = (proj.current.x * 0.5 + 0.5) * size.width;
       const cy = (-proj.current.y * 0.5 + 0.5) * size.height;
 
-      /* 缩放要按「屏幕上 1 个世界单位 = 多少 CSS 像素」来算，再乘上牌子在
-         世界里的目标高度，最后除以它自己的像素高度。这里最容易错的是拿世界
-         单位当像素用 —— 那样牌子会被放大上百倍，直接糊满屏幕把 3D 盖住。 */
-      unit.current.copy(world.current);
-      unit.current.y += 1;
-      unit.current.project(camera);
-      const pxPerUnit = Math.abs(
-        cy - (-unit.current.y * 0.5 + 0.5) * size.height
-      );
-      const platePx = sizes.current[i] || 44;
-      const scale = (pxPerUnit * PLATE_WORLD_H) / platePx;
+      const depth = camera.position.distanceTo(world.current);
+      const scale = Math.min(1.14, Math.max(0.86, MAP_DIST / depth));
 
       el.style.transform = `translate(-50%, -50%) translate(${cx.toFixed(
         1
       )}px, ${cy.toFixed(1)}px) scale(${scale.toFixed(3)})`;
     });
+
+    void hovered;
+    void onEnter;
   });
 
   return null;
 };
 
-/* ---------------------------- 空间内容 ---------------------------- */
+/* ---------------------------- 星系 ---------------------------- */
 
-const Hall = ({
+const Galaxy = ({
   view,
+  flight,
   stages,
   plates,
-  sizes,
-  openness,
+  hovered,
   painted,
   onEnter,
 }: {
   view: React.MutableRefObject<View>;
+  flight: React.MutableRefObject<Flight>;
   stages: React.MutableRefObject<Stage[]>;
   plates: React.MutableRefObject<(HTMLElement | null)[]>;
-  sizes: React.MutableRefObject<number[]>;
-  openness: React.MutableRefObject<number[]>;
+  hovered: number | null;
   painted: React.MutableRefObject<boolean>;
   onEnter: (index: number) => void;
 }) => (
   <>
-    <color attach="background" args={[SPACE_COLOR]} />
-    <fog attach="fog" args={[SPACE_COLOR, 34, 78]} />
+    {/* 注意：这里**不能**给场景设背景色。
+        设了之后画布就是一块不透明的底，底下那层真实星云照片会被整个盖住，
+        只剩一片死黑的底色 —— 星云就只能靠画布自己画，也就是完全没有。 */}
 
-    <ambientLight intensity={0.85} color="#93a4ff" />
-    <hemisphereLight args={["#6a7bd0", "#0a0e28", 0.55]} />
-    <directionalLight position={[-10, 16, 9]} intensity={0.35} color="#ffffff" />
-
-    {/* 点光源一律 decay={0}：three 现在用物理正确的衰减，按平方反比算的话，
-        门厅半径 14.5 处的照度只有 3 单位处的 1/23，灯得开到几百才够亮。 */}
+    {/* 恒星从中心往外照，环境光兜住背阴面 ——
+        只留恒星的话，从外侧看行星全是黑的（受光面朝内）。
+        两盏都压得比之前暗：光太亮会把行星表面的纹样照成一坨纯色。 */}
+    <ambientLight intensity={0.6} color="#7b8ad6" />
     <pointLight
-      position={[0, CEIL_H - 0.6, 0]}
-      intensity={2.4}
-      distance={42}
+      position={[0, 0, 0]}
+      intensity={1.5}
+      distance={220}
       decay={0}
-      color="#cdd8ff"
+      color="#ffd9a0"
     />
-    {ROOMS.map((room) => (
-      <pointLight
-        key={room.id}
-        position={[
-          Math.sin(room.angle) * (R_HUB + 7),
-          5.6,
-          Math.cos(room.angle) * (R_HUB + 7),
-        ]}
-        intensity={1.7}
-        distance={22}
-        decay={0}
-        color={room.accent}
-      />
+    <directionalLight position={[0, 42, 58]} intensity={0.26} color="#ffffff" />
+
+    <Starfield />
+    <Sun />
+    <OrbitRing />
+
+    {ROOMS.map((room, i) => (
+      <Planet key={room.id} room={room} index={i} onEnter={onEnter} />
     ))}
 
-    <Hub />
-    {ROOMS.map((room) => (
-      <RoomShell key={room.id} room={room} />
-    ))}
-    {ROOMS.map((room) => (
-      <Door key={room.id} room={room} openness={openness} onEnter={onEnter} />
-    ))}
-
-    <Rig view={view} />
+    <Rig view={view} flight={flight} />
     <Boards view={view} stages={stages} painted={painted} />
-    <Plates view={view} plates={plates} sizes={sizes} onEnter={onEnter} />
+    <Plates
+      view={view}
+      flight={flight}
+      plates={plates}
+      hovered={hovered}
+      onEnter={onEnter}
+    />
   </>
 );
 
@@ -716,7 +726,7 @@ const detectWebGL = () => {
 
 /**
  * 显卡驱动异常 / 上下文耗尽时 Canvas 会抛错，
- * 兜住它免得整个页面跟着白屏，出问题就退回静态渐变。
+ * 兜住它免得整个页面跟着白屏，出问题就退回静态背景。
  */
 class SceneErrorBoundary extends Component<
   { children: ReactNode },
@@ -734,29 +744,30 @@ class SceneErrorBoundary extends Component<
 const Scene3D = () => {
   const [supported, setSupported] = useState(false);
   const [broken, setBroken] = useState(false);
-  /** 已经站定的房间；null = 还在门厅 */
+  /** 已经停靠在哪颗行星；null = 停在星图上 */
   const [here, setHere] = useState<number | null>(null);
-  const [walking, setWalking] = useState(false);
+  const [flying, setFlying] = useState(false);
+  /** 鼠标停在哪个名牌上：只影响名牌展开，不进渲染循环 */
+  const [hovered, setHovered] = useState<number | null>(null);
 
-  const view = useRef<View>({ progress: 0, hubYaw: 0, target: -1 });
-  const openness = useRef<number[]>(ROOMS.map(() => 0));
-  const walk = useRef({
+  const view = useRef<View>({ target: -1, progress: 0, azimuth: 0 });
+  const flight = useRef<Flight>({
     active: false,
-    phase: "turn" as "turn" | "walk",
     t: 0,
-    from: 0,
-    to: 0,
+    dur: FLY_SECONDS,
+    fromP: new THREE.Vector3(),
+    toP: new THREE.Vector3(),
+    viaP: null,
+    fromL: new THREE.Vector3(),
+    toL: new THREE.Vector3(),
+    viaL: null,
     toRoom: -1,
-    yawFrom: 0,
-    yawTarget: 0,
   });
 
   const stages = useRef<Stage[]>(
     ROOMS.map(() => ({ el: null, baseLeft: 0, baseTop: 0, alpha: 0 }))
   );
   const plates = useRef<(HTMLElement | null)[]>(ROOMS.map(() => null));
-  /** 每块房名牌自身的像素高度，投影时要用它反推缩放 */
-  const sizes = useRef<number[]>(ROOMS.map(() => 44));
   /** 渲染循环有没有真的跑起来（跑不起来就得退回普通排版） */
   const painted = useRef(false);
   const shade = useRef<HTMLDivElement>(null);
@@ -773,9 +784,6 @@ const Scene3D = () => {
       stages.current[i].el = el;
       stages.current[i].baseLeft = r.left;
       stages.current[i].baseTop = r.top;
-    });
-    plates.current.forEach((el, i) => {
-      if (el?.offsetHeight) sizes.current[i] = el.offsetHeight;
     });
   }, []);
 
@@ -799,7 +807,7 @@ const Scene3D = () => {
 
       if (why.length) {
         // 留一行日志：出问题时按 F12 就能看到究竟卡在哪一条
-        console.info(`[空间模式] 已退回普通排版 —— ${why.join("、")}`);
+        console.info(`[星系模式] 已退回普通排版 —— ${why.join("、")}`);
       }
       setSupported(why.length === 0);
     };
@@ -817,57 +825,74 @@ const Scene3D = () => {
     };
   }, []);
 
-  /** 走进第 index 间房 */
+  /** 飞向第 index 颗行星 */
   const enter = useCallback((index: number) => {
     if (index < 0 || index >= ROOMS.length) return;
+    const f = flight.current;
+    // 飞行途中不接受新指令，免得两条路径打架
+    if (f.active) return;
     const v = view.current;
-    if (v.target === index && v.progress > 0.9) return;
+    if (v.target === index) return;
 
-    // 已经在别的房间里：先把在这间的进度收掉，再由本轮行走接管
-    const w = walk.current;
-    w.active = true;
-    w.phase = "turn";
-    w.t = 0;
-    w.from = 0;
-    w.to = 1;
-    w.toRoom = index;
-    w.yawFrom = v.hubYaw;
-    w.yawTarget = ROOMS[index].angle;
-    setWalking(true);
+    const fromDocked = v.target >= 0;
+    f.active = true;
+    f.t = 0;
+    f.fromP = fromDocked ? dockPos(v.target) : mapPos(v.azimuth);
+    f.fromL = fromDocked ? boardAnchor(v.target) : MAP_LOOK.clone();
+    f.toP = dockPos(index);
+    f.toL = boardAnchor(index);
+    /* 已经停靠在某颗行星时再跳到另一颗：中间从星图上方绕一下，
+       否则视线要横跨半个星系甩过去，人会晕。 */
+    f.viaP = fromDocked ? mapPos(ROOMS[index].angle) : null;
+    f.viaL = fromDocked ? MAP_LOOK.clone() : null;
+    f.dur = fromDocked ? HOP_SECONDS : FLY_SECONDS;
+    f.toRoom = index;
+
+    // 从行星跳到行星时，把方位角挪到目标这边，之后回星图就落在这一侧
+    if (fromDocked) v.azimuth = ROOMS[index].angle;
+
+    v.target = index;
+    v.progress = 0;
+    setFlying(true);
     setHere(null);
   }, []);
 
-  /** 回到门厅 */
+  /** 回到星图 */
   const leave = useCallback(() => {
+    const f = flight.current;
+    if (f.active) return;
     const v = view.current;
-    const w = walk.current;
-    // 记住刚才那扇门的方向，回到门厅时就不用再转一次头
-    const yaw = v.target >= 0 ? ROOMS[v.target].angle : v.hubYaw;
-    w.active = true;
-    w.phase = "walk";
-    w.t = 0;
-    w.from = v.progress;
-    w.to = 0;
-    w.toRoom = -1;
-    w.yawFrom = yaw;
-    w.yawTarget = yaw;
+    if (v.target < 0) return;
+
+    f.active = true;
+    f.t = 0;
+    f.fromP = dockPos(v.target);
+    f.fromL = boardAnchor(v.target);
+    f.toP = mapPos(v.azimuth);
+    f.toL = MAP_LOOK.clone();
+    f.viaP = null;
+    f.viaL = null;
+    f.dur = FLY_SECONDS;
+    f.toRoom = -1;
+
     v.target = -1;
-    v.hubYaw = yaw;
-    setWalking(true);
+    v.progress = 0;
+    setFlying(true);
     setHere(null);
   }, []);
 
-  /** 上一间 / 下一间 */
+  /** 上一颗 / 下一颗 */
   const step = useCallback(
     (delta: number) => {
       const current = view.current.target;
+      // 停在星图上时，「下一颗」从第一颗开始
       const from = current < 0 ? 0 : current;
       enter((from + delta + ROOMS.length) % ROOMS.length);
     },
     [enter]
   );
 
-  /* 把导航权交出去：站内所有指着房间的 # 锚点、以及命令面板，都走 enterRoom */
+  /* 把导航权交出去：站内所有指着星球的 # 锚点、以及命令面板，都走 enterRoom */
   useEffect(() => {
     if (!showScene) return;
     return registerRoomEnter((roomId) => {
@@ -894,13 +919,14 @@ const Scene3D = () => {
       });
       if (shade.current) shade.current.style.opacity = "";
       painted.current = false;
-      view.current = { progress: 0, hubYaw: 0, target: -1 };
+      view.current = { target: -1, progress: 0, azimuth: 0 };
+      flight.current.active = false;
       setHere(null);
     };
   }, [showScene, measure]);
 
-  /* 拦截站内所有指着房间的 # 锚点 ——
-     导航栏、Hero 的「看看我的作品」都是这种链接，统一在这里转成「进门」，
+  /* 拦截站内所有指着星球的 # 锚点 ——
+     导航栏、Hero 的「看看我的作品」都是这种链接，统一在这里转成「飞过去」，
      页面里各处的链接就一行都不用改。 */
   useEffect(() => {
     if (!showScene) return;
@@ -922,7 +948,7 @@ const Scene3D = () => {
     return () => document.removeEventListener("click", onClick, true);
   }, [showScene, enter]);
 
-  /* 主循环：转身 → 行走 → 门扇开合 */
+  /* 主循环：推进飞行进度 */
   useEffect(() => {
     if (!showScene) return;
     let raf = 0;
@@ -934,54 +960,20 @@ const Scene3D = () => {
       const dt = Math.min(0.05, last ? (now - last) / 1000 : 1 / 60);
       last = now;
 
+      const f = flight.current;
       const v = view.current;
-      const w = walk.current;
 
-      if (w.active) {
-        if (w.phase === "turn") {
-          /* 先转身面对门，再往前走。不这么做的话，从门厅任意朝向一步跨出去，
-             视线会猛地甩过来。 */
-          w.t = Math.min(1, w.t + dt / TURN_SECONDS);
-          const e = 1 - Math.pow(1 - w.t, 3);
-          v.hubYaw = w.yawFrom + (w.yawTarget - w.yawFrom) * e;
-          if (w.t >= 1) {
-            w.phase = "walk";
-            w.t = 0;
-            v.target = w.toRoom;
-            v.hubYaw = w.yawTarget;
-          }
-        } else {
-          /* 行走用「时间」推进，不用指数逼近 —— 后者一开始冲得极快，
-             门刚开一条缝人已经贴上去了，完全不像走路。 */
-          w.t = Math.min(1, w.t + dt / WALK_SECONDS);
-          const t = w.t;
-          // easeInOutCubic：起步慢、中段快、收尾稳稳停住
-          const e = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
-          v.progress = w.from + (w.to - w.from) * e;
-          if (t >= 1) {
-            w.active = false;
-            setWalking(false);
-            setHere(w.toRoom >= 0 ? w.toRoom : null);
-          }
+      if (f.active) {
+        f.t = Math.min(1, f.t + dt / f.dur);
+        v.progress = f.t;
+        if (f.t >= 1) {
+          f.active = false;
+          v.target = f.toRoom;
+          v.progress = f.toRoom >= 0 ? 1 : 0;
+          setFlying(false);
+          setHere(f.toRoom >= 0 ? f.toRoom : null);
         }
-      } else if (v.target < 0) {
-        v.progress = 0;
-      } else {
-        v.progress = 1;
       }
-
-      /* 门扇开度由「走到哪了」决定，不由「点没点」决定 ——
-         否则门会瞬间弹开，等于没有「推开」这个动作。
-         起点压到 0.04，点击后立刻能看到门动，不至于以为按钮没生效。 */
-      ROOMS.forEach((_, i) => {
-        const relevant = w.active && w.phase === "walk" && w.toRoom === i
-          ? v.progress
-          : v.target === i
-          ? v.progress
-          : 0;
-        const want = THREE.MathUtils.smoothstep(relevant, 0.04, 0.36);
-        openness.current[i] += (want - openness.current[i]) * 0.12;
-      });
 
       raf = requestAnimationFrame(tick);
     };
@@ -989,17 +981,19 @@ const Scene3D = () => {
     return () => cancelAnimationFrame(raf);
   }, [showScene]);
 
-  /* 门厅里滚轮转向；房间里按 Esc 退回门厅 */
+  /* 星图上滚轮绕星系公转；停靠时按 Esc 回星图 */
   useEffect(() => {
     if (!showScene) return;
     const onWheel = (event: WheelEvent) => {
       const v = view.current;
-      if (v.target >= 0 || walk.current.active) return;
+      if (v.target >= 0 || flight.current.active) return;
       event.preventDefault();
-      v.hubYaw += event.deltaY * 0.0016;
+      v.azimuth += event.deltaY * 0.0016;
     };
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && view.current.target >= 0) leave();
+      const v = view.current;
+      if (flight.current.active) return;
+      if (event.key === "Escape" && v.target >= 0) leave();
     };
     window.addEventListener("wheel", onWheel, { passive: false });
     window.addEventListener("keydown", onKey);
@@ -1009,7 +1003,7 @@ const Scene3D = () => {
     };
   }, [showScene, leave]);
 
-  /* 渲染循环万一没跑起来（显卡抽风），把空间模式撤掉，别让正文一直藏着 */
+  /* 渲染循环万一没跑起来（显卡抽风），把星系模式撤掉，别让正文一直藏着 */
   useEffect(() => {
     if (!showScene) return;
     const guard = window.setTimeout(() => {
@@ -1020,19 +1014,37 @@ const Scene3D = () => {
 
   return (
     <>
+      {/* 背景：真实星云照片 + 一层压暗暗角。这一层在 3D 没启用时也在，
+          所以降级后的页面同样是宇宙调，不会突然变回一块纯色。 */}
       <div
         aria-hidden="true"
         className="fixed inset-0 z-0 overflow-hidden"
-        style={{
-          background: `radial-gradient(120% 90% at 50% 8%, #141034 0%, #06071f 45%, ${SPACE_COLOR} 100%)`,
-        }}
+        style={{ backgroundColor: SPACE_COLOR }}
       >
+        {/* 星云照片单开一层：提亮 + 加饱和，真实图片才真正看得见 */}
+        <div
+          className="absolute inset-0"
+          style={{
+            backgroundImage: "url(/space/space-bg.jpg)",
+            backgroundSize: "cover",
+            backgroundPosition: "center",
+            filter: "brightness(1.5) saturate(1.35)",
+          }}
+        />
+        {/* 再压一层暗角，保证正文和名牌始终清楚 */}
+        <div
+          className="absolute inset-0"
+          style={{
+            background:
+              "radial-gradient(120% 90% at 50% 8%, rgba(25,16,70,0.2) 0%, rgba(7,10,36,0.1) 45%, rgba(4,6,26,0.6) 100%)",
+          }}
+        />
         {showScene && (
           <SceneErrorBoundary>
             <Canvas
               dpr={[1, 1.75]}
               gl={{ antialias: true, powerPreference: "high-performance" }}
-              camera={{ position: [0, EYE, 0], fov: 45, near: 0.1, far: 260 }}
+              camera={{ position: [0, MAP_HEIGHT, MAP_HORIZ], fov: 45, near: 0.1, far: 420 }}
               onCreated={({ gl }) => {
                 // 上下文丢了就直接撤掉 3D，别让页面卡在一张黑画布上
                 gl.domElement.addEventListener("webglcontextlost", (event) => {
@@ -1041,12 +1053,12 @@ const Scene3D = () => {
                 });
               }}
             >
-              <Hall
+              <Galaxy
                 view={view}
+                flight={flight}
                 stages={stages}
                 plates={plates}
-                sizes={sizes}
-                openness={openness}
+                hovered={hovered}
                 painted={painted}
                 onEnter={enter}
               />
@@ -1054,21 +1066,32 @@ const Scene3D = () => {
           </SceneErrorBoundary>
         )}
 
-        {/* 四周压暗一点：解说板是主角，空间只做背景 */}
+        {/* 停靠到某颗行星时，一圈它的本色光晕从板子后面透出来 ——
+            板子挡住了行星本体，这点光是「你确实到了那颗星球」的唯一提示。 */}
+        {here !== null && (
+          <div
+            className="pointer-events-none absolute inset-0"
+            style={{
+              background: `radial-gradient(ellipse 62% 52% at 50% 50%, ${ROOMS[here].accent}38 0%, transparent 72%)`,
+            }}
+          />
+        )}
+
+        {/* 四周压暗一点：解说板是主角，星系只做背景 */}
         <div
           ref={shade}
           className="pointer-events-none absolute inset-0"
           style={{
             background:
-              "radial-gradient(ellipse 78% 62% at 50% 52%, rgba(0,3,25,0.5) 0%, rgba(0,3,25,0.24) 55%, rgba(0,3,25,0.5) 100%)",
+              "radial-gradient(ellipse 78% 62% at 50% 52%, rgba(2,4,20,0.28) 0%, rgba(2,4,20,0.08) 55%, rgba(2,4,20,0.38) 100%)",
           }}
         />
       </div>
 
-      {/* 交互层：房名牌、门厅提示、房间导航。
+      {/* 交互层：行星名牌、星图提示、停靠导航。
           必须放在上面那层（z-0，自成层叠上下文）之外，才能压在正文（z-10）之上。 */}
       {showScene && (
-        <div className="hall-ui fixed inset-0 z-20">
+        <div className="orbit-ui fixed inset-0 z-20">
           {ROOMS.map((room, i) => (
             <button
               key={room.id}
@@ -1076,64 +1099,70 @@ const Scene3D = () => {
               ref={(el) => {
                 plates.current[i] = el;
               }}
-              className="hall-plate"
+              className="orbit-plate"
+              data-expanded={hovered === i}
               style={{ ["--plate-accent" as string]: room.accent }}
               onClick={() => enter(i)}
-              aria-label={`推门进入${room.label}：${roomBlurbs[room.id] ?? ""}`}
+              onMouseEnter={() => setHovered(i)}
+              onMouseLeave={() => setHovered((h) => (h === i ? null : h))}
+              onFocus={() => setHovered(i)}
+              onBlur={() => setHovered((h) => (h === i ? null : h))}
+              aria-label={`飞向${room.label}：${roomBlurbs[room.id] ?? ""}`}
             >
-              <span className="hall-plate-top">
-                <span className="hall-plate-no">
+              <span className="orbit-plate-top">
+                <span className="orbit-plate-no">
                   {String(i + 1).padStart(2, "0")}
                 </span>
-                <span className="hall-plate-name">{room.label}</span>
+                <span className="orbit-plate-name">{room.label}</span>
               </span>
-              {/* 门口的一句话：让人在推门之前就知道里面有什么 */}
-              <span className="hall-plate-blurb">{roomBlurbs[room.id]}</span>
+              {/* 默认收起，指上去或键盘聚焦才展开 ——
+                  8 块牌子同在星图上，常驻两行会挤成一团 */}
+              <span className="orbit-plate-blurb">{roomBlurbs[room.id]}</span>
             </button>
           ))}
 
-          {/* 门厅提示：只在门厅里显示 */}
-          <div className="hall-hint" data-hidden={walking || here !== null}>
-            <span className="hall-hint-line">
-              滚轮左右转一圈看看，点门上的房名进去
+          {/* 星图提示：只在星图上显示 */}
+          <div className="orbit-hint" data-hidden={flying || here !== null}>
+            <span className="orbit-hint-line">
+              滚轮绕着星系转一圈，点一颗星球进去
             </span>
             <button
               type="button"
-              className="hall-door-btn"
+              className="orbit-go-btn"
               onClick={() => enter(1)}
             >
-              <FaDoorOpen />
-              直接进 · 作品房
+              <FaRocket />
+              直接去 · 作品星
             </button>
           </div>
 
-          {/* 房间里的门牌导航 */}
-          {here !== null && !walking && (
-            <div className="hall-nav">
-              <button type="button" className="hall-nav-btn" onClick={() => step(-1)}>
+          {/* 停靠后的导航 */}
+          {here !== null && !flying && (
+            <div className="orbit-nav">
+              <button type="button" className="orbit-nav-btn" onClick={() => step(-1)}>
                 <FaArrowLeft className="me-1.5" />
-                上一间
+                上一颗
               </button>
               <button
                 type="button"
-                className="hall-nav-btn hall-nav-btn--back"
+                className="orbit-nav-btn orbit-nav-btn--back"
                 onClick={leave}
               >
-                回到门厅
+                回到星图
               </button>
-              <span className="hall-nav-label">
+              <span className="orbit-nav-label">
                 {here + 1} / {ROOMS.length} · {ROOMS[here].label}
               </span>
-              <button type="button" className="hall-nav-btn" onClick={() => step(1)}>
-                下一间
+              <button type="button" className="orbit-nav-btn" onClick={() => step(1)}>
+                下一颗
                 <FaArrowRight className="ms-1.5" />
               </button>
             </div>
           )}
 
-          {walking && (
-            <div className="hall-nav">
-              <span className="hall-nav-label">正在前往…</span>
+          {flying && (
+            <div className="orbit-nav">
+              <span className="orbit-nav-label">正在前往…</span>
             </div>
           )}
         </div>

@@ -214,17 +214,17 @@
     min-height: 100vh;
     padding: 0;
   }
-  /* 滚动已经不是导航手段（改成推门进房间了），留着它只会让板子漂走。
-     锁住之后页面高度还在，但滚不动 —— 和 /room 那个样板里的处理一致。 */
+  /* 滚动已经不是导航手段（改成飞向星球了），留着它只会让板子漂走。
+     锁住之后页面高度还在，但滚不动。 */
   html.spatial-on,
   html.spatial-on body {
     height: 100%;
     overflow: hidden;
     overscroll-behavior: none;
   }
-  /* 空间模式下 main 只是个「摆位的坐标系」，真正的点击目标是 3D 里的门和
+  /* 星系模式下 main 只是个「摆位的坐标系」，真正的点击目标是 3D 里的行星和
      当前那块解说板（板子的 pointer-events 由投影脚本单独打开）。
-     不把它关掉的话，main 整片盖在画布上，门就永远点不中了。
+     不把它关掉的话，main 整片盖在画布上，行星就永远点不中了。
      导航栏是 main 里的例外，单独放行。 */
   html.spatial-on main {
     pointer-events: none;
@@ -499,18 +499,18 @@
 }
 
 /* ==========================================================================
-   八房大厅的交互层（房名牌 / 门厅提示 / 房间导航）
+   星系的交互层（行星名牌 / 星图提示 / 停靠导航）
    --------------------------------------------------------------------------
-   这一层由 components/ui/Scene3D.tsx 渲染。房名牌由投影脚本每帧写 transform，
+   这一层由 components/ui/Scene3D.tsx 渲染。行星名牌由投影脚本每帧写 transform，
    所以容器不接收鼠标事件，只有牌子自己开 pointer-events。
    ========================================================================== */
-.hall-ui {
+.orbit-ui {
   pointer-events: none;
 }
 
 /* 房名牌：投影到各自门洞上方。初始 opacity 0，脚本接管后才逐个亮起来。
    两行：上面是序号 + 房名，下面是屋里那句话。 */
-.hall-plate {
+.orbit-plate {
   position: absolute;
   top: 0;
   left: 0;
@@ -534,63 +534,71 @@
   /* 缩放写在 transform 里，这里不能加 transition，否则每帧都在补间 */
   will-change: transform;
 }
-.hall-plate-top {
+.orbit-plate-top {
   display: flex;
   align-items: baseline;
   gap: 8px;
 }
-.hall-plate:hover {
+.orbit-plate:hover {
   border-color: color-mix(in srgb, var(--plate-accent, #2f7ff0) 70%, #ffffff);
 }
-.hall-plate:focus-visible {
+.orbit-plate:focus-visible {
   outline: 3px solid #ffcf00;
   outline-offset: 3px;
 }
-.hall-plate-no {
+.orbit-plate-no {
   color: var(--plate-accent, #2f7ff0);
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.06em;
   font-variant-numeric: tabular-nums;
 }
-.hall-plate-name {
+.orbit-plate-name {
   color: #ffffff;
   font-size: 15px;
   font-weight: 700;
   letter-spacing: 0.06em;
 }
-/* 屋里那句话：比房名淡一档，是补充信息，不该抢主体 */
-.hall-plate-blurb {
+/* 屋里那句话：比星名淡一档，是补充信息，不该抢主体 */
+.orbit-plate-blurb {
   color: #aab3d8;
   font-size: 11.5px;
   line-height: 1.3;
   letter-spacing: 0.01em;
+  /* 星图上 8 块名牌同在画面里，常驻两行会挤成一团 ——
+     所以概括句默认收起，鼠标指上去或键盘聚焦才展开 */
+  display: none;
+}
+.orbit-plate[data-expanded="true"] .orbit-plate-blurb {
+  display: block;
 }
 
-/* 门厅提示：一块乐高积木按钮 */
-.hall-hint {
+/* 星图提示。挪到左下角，而不是居中 ——
+   星轨离相机最近的那颗行星（启程星）永远落在画面下方的**中央**，
+   提示只要居中，就必然和它的名牌撞在一起（试过抬到 25vh，仍然压住 16px）。
+   左下角在星轨之外，从任何窗口尺寸看都是空的。 */
+.orbit-hint {
   position: absolute;
-  left: 50%;
-  bottom: 8vh;
+  left: 42px;
+  bottom: 34px;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 10px;
-  transform: translateX(-50%);
+  align-items: flex-start;
+  gap: 9px;
   transition: opacity 0.45s ease, transform 0.45s ease;
 }
 /* 镜头一动就淡出，别挡在半路上 */
-.hall-hint[data-hidden="true"] {
+.orbit-hint[data-hidden="true"] {
   opacity: 0;
-  transform: translateX(-50%) translateY(10px);
+  transform: translateY(10px);
   pointer-events: none;
 }
-.hall-hint-line {
+.orbit-hint-line {
   color: #8892c4;
   font-size: 12.5px;
   letter-spacing: 0.04em;
 }
-.hall-door-btn {
+.orbit-door-btn {
   display: inline-flex;
   height: 52px;
   align-items: center;
@@ -607,21 +615,21 @@
   box-shadow: 6px 6px 0 rgba(0, 0, 0, 0.55);
   transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
-.hall-door-btn:hover {
+.orbit-door-btn:hover {
   transform: translateY(-2px);
   box-shadow: 9px 9px 0 rgba(0, 0, 0, 0.55);
 }
-.hall-door-btn:active {
+.orbit-door-btn:active {
   transform: translateY(1px);
   box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.55);
 }
-.hall-door-btn:focus-visible {
+.orbit-door-btn:focus-visible {
   outline: 3px solid #ffcf00;
   outline-offset: 3px;
 }
 
 /* 房间里的门牌导航 */
-.hall-nav {
+.orbit-nav {
   position: absolute;
   left: 50%;
   bottom: 4.5vh;
@@ -635,15 +643,15 @@
   box-shadow: 0 0 0 2px rgba(47, 127, 240, 0.45), 6px 7px 0 rgba(0, 0, 0, 0.5);
   backdrop-filter: blur(8px);
   transform: translateX(-50%);
-  animation: hall-nav-in 0.4s cubic-bezier(0.22, 1.25, 0.36, 1);
+  animation: orbit-nav-in 0.4s cubic-bezier(0.22, 1.25, 0.36, 1);
 }
-@keyframes hall-nav-in {
+@keyframes orbit-nav-in {
   from {
     opacity: 0;
     transform: translateX(-50%) translateY(12px);
   }
 }
-.hall-nav-btn {
+.orbit-nav-btn {
   display: inline-flex;
   height: 36px;
   align-items: center;
@@ -658,20 +666,20 @@
   pointer-events: auto;
   transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
 }
-.hall-nav-btn:hover {
+.orbit-nav-btn:hover {
   border-color: #ffcf00;
   color: #ffcf00;
 }
-.hall-nav-btn:focus-visible {
+.orbit-nav-btn:focus-visible {
   outline: 3px solid #ffcf00;
   outline-offset: 2px;
 }
 /* 中间那枚是回门厅，稍微强调一点 */
-.hall-nav-btn--back {
+.orbit-nav-btn--back {
   border-color: rgba(47, 127, 240, 0.55);
   background: rgba(47, 127, 240, 0.12);
 }
-.hall-nav-label {
+.orbit-nav-label {
   padding: 0 6px;
   color: #8892c4;
   font-size: 11.5px;
@@ -679,8 +687,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .hall-hint,
-  .hall-nav {
+  .orbit-hint,
+  .orbit-nav {
     animation: none !important;
     transition: none !important;
   }
