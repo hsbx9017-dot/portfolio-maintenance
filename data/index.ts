@@ -93,6 +93,8 @@ export type Stat = {
 /* ============================== 个人信息 ============================== */
 
 export const profile = {
+  githubUser: "hsbx9017-dot",
+  siteUrl: "https://hsbx9017-dot.github.io",
   name: "杨豫豪",
   shortName: "yyh",
   role: "环境工程 × AI 技术探索者",
@@ -418,7 +420,7 @@ export const socials: Social[] = [
   {
     id: 1,
     name: "GitHub",
-    href: "https://github.com/yanghao158640",
+    href: `https://github.com/${profile.githubUser}`,
     icon: "github",
   },
   {

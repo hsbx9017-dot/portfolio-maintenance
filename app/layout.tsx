@@ -9,7 +9,7 @@ import { ThemeProvider } from "./provider";
  * 微信 / QQ / Twitter 抓取时只认绝对地址，少了这一句，链接分享出去就没有缩略图。
  * 以后换域名（比如挂了自定义域名），只改这一处。
  */
-const SITE_URL = "https://yanghao158640.github.io";
+const SITE_URL = profile.siteUrl;
 const SITE_TITLE = `${profile.name} | ${profile.role}`;
 
 export const metadata: Metadata = {

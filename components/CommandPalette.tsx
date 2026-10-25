@@ -168,7 +168,7 @@ const CommandPalette = () => {
       keywords: "github 代码 仓库 源码 开源",
       run: () =>
         window.open(
-          "https://github.com/yanghao158640",
+          `https://github.com/${profile.githubUser}`,
           "_blank",
           "noopener"
         ),

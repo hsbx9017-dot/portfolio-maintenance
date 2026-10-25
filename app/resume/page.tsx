@@ -85,8 +85,8 @@ const ResumePage = () => {
             </li>
             <li>{profile.location}</li>
             <li>
-              <a href="https://github.com/yanghao158640">
-                github.com/yanghao158640
+              <a href={`https://github.com/${profile.githubUser}`}>
+                github.com/{profile.githubUser}
               </a>
             </li>
           </ul>
@@ -185,7 +185,7 @@ const ResumePage = () => {
 
         <footer className="rs-foot">
           <span>证书原件与作品演示均可在线查看</span>
-          <span>github.com/yanghao158640</span>
+          <span>github.com/{profile.githubUser}</span>
         </footer>
       </div>
     </>

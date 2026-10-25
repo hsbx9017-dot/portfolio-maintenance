@@ -1,6 +1,6 @@
 # 杨豫豪 · 环境工程 × AI 作品集
 
-在线网站：[yanghao158640.github.io](https://yanghao158640.github.io/)。本仓库维护网站源码、内容和公开素材；部署仓库只保存静态构建结果。
+当前网站：[hsbx9017-dot.github.io](https://hsbx9017-dot.github.io/)。当前源码在 `hsbx9017-dot/portfolio-maintenance` 的 `publish/hsbx-site-20261025` 分支维护；部署仓库只保存静态构建结果。原站 [yanghao158640.github.io](https://yanghao158640.github.io/) 保留。
 
 ## 代表作品
 
@@ -18,8 +18,10 @@
 
 | 仓库 | 用途 |
 | --- | --- |
-| `yanghao158640/portfolio` | 当前源码。修改内容、样式、组件和简历生成脚本。 |
-| `yanghao158640/yanghao158640.github.io` | GitHub Pages 静态产物，不直接维护源码。 |
+| `hsbx9017-dot/portfolio-maintenance` | 当前源码，使用 `publish/hsbx-site-20261025` 分支。 |
+| `hsbx9017-dot/hsbx9017-dot.github.io` | 当前正式网站的静态构建产物，Pages 从 `main` 根目录发布。 |
+| `yanghao158640/portfolio` | 原作品站源码，保留其维护请求。 |
+| `yanghao158640/yanghao158640.github.io` | 原网站部署仓库，保留原网址。 |
 | `yanghao158640/competition-bootcamp` | 训练营作品与既有坦克游戏、学习汇报链接。 |
 | `yanghao158640/plane-game` | 飞机大战源码与站点。 |
 | `yanghao158640/resume` | 历史简历入口，保留兼容访问。 |
@@ -42,8 +44,10 @@
 2. 改动内容后运行 `npm run resume:pdf`。需要 Python、reportlab 和 pypdf；可用 `PORTFOLIO_PYTHON` 指定解释器、`PORTFOLIO_CJK_FONT` 指定中文字体。
 3. 设置环境变量 `BUILD_TARGET=pages`，运行 `npm run build`，产物在 `out/`。
 4. 运行 `node scripts/check-portfolio.mjs` 检查项目、统计和静态文件。
-5. 在相邻目录克隆部署仓库为 `github-portfolio-deploy`，运行 `npm run deploy` 同步静态文件。同步会验证目标仓库身份，并清掉目标中被新版构建替代的已追踪产物。
-6. 检查并提交源码仓库与部署仓库，再将部署仓库推送到 `main`。GitHub Pages 从部署仓库发布。
+5. 在相邻目录克隆当前部署仓库为 `github-hsbx-portfolio-deploy`，运行 `npm run deploy` 同步静态文件。同步会验证目标仓库身份，并清掉目标中被新版构建替代的已追踪产物。
+6. 检查并提交源码分支 `publish/hsbx-site-20261025` 与部署仓库，将部署仓库推送到 `main`。GitHub Pages 从部署仓库发布。
+
+`profile.siteUrl` 与 `profile.githubUser` 统一维护正式地址和当前 GitHub 身份，网页分享信息、热力图、联系方式与 PDF 随之更新。游戏和学习汇报继续指向原来可用的作品地址。
 
 PDF可编辑来源是 `data/index.ts` 和 `scripts/build-resume-pdf.py`，不再手工维护第二份HTML简历。生成结果同时保存到 `public/resume/` 和被忽略的 `output/pdf/`。
 

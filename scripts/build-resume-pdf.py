@@ -18,7 +18,8 @@ for name,size,leading,color in [('name',23,30,'#18252b'),('role',11,16,'#146454'
  styles[name]=ParagraphStyle(name,fontName=face,fontSize=size,leading=leading,textColor=colors.HexColor(color),spaceAfter=5,spaceBefore=8 if name=='heading' else 0,wordWrap='CJK')
 def p(text,kind='body'):return Paragraph(escape(str(text)),styles[kind])
 def link(label,url):return '<link href="'+escape(url,{'"':'&quot;'})+'" color="#146454">'+escape(label)+'</link>'
-pr=d['profile'];head=Table([[[p(pr['name'],'name'),p(pr['role'],'role')],[p(pr['phone']+' | '+pr['email'],'small'),p(pr['location'],'small'),Paragraph(link('yanghao158640.github.io','https://yanghao158640.github.io/'),styles['small'])]]],colWidths=[290,225])
+pr=d['profile'];site_url=pr['siteUrl'].rstrip('/')+'/'
+head=Table([[[p(pr['name'],'name'),p(pr['role'],'role')],[p(pr['phone']+' | '+pr['email'],'small'),p(pr['location'],'small'),Paragraph(link(site_url.split('://',1)[1].rstrip('/'),site_url),styles['small'])]]],colWidths=[290,225])
 head.setStyle(TableStyle([('VALIGN',(0,0),(-1,-1),'TOP'),('LEFTPADDING',(0,0),(-1,-1),0),('RIGHTPADDING',(0,0),(-1,-1),0),('BOTTOMPADDING',(0,0),(-1,-1),12),('LINEBELOW',(0,0),(-1,-1),1.2,accent)]))
 story=[head,Spacer(1,10),p(pr['school']+pr['major']+'专业本科在读，借助 AI 工具将学习和产品想法做成可体验的作品。代表项目覆盖污水处理教学模拟、学习规划工具与机器学习课程汇报；持续根据使用反馈改进功能。')]
 main=[p('代表作品 | 专业实践与 AI 应用','heading')]
@@ -37,6 +38,6 @@ doc=SimpleDocTemplate(out,pagesize=A4,leftMargin=40,rightMargin=40,topMargin=30,
 r=PdfReader(out)
 if len(r.pages)!=1:raise RuntimeError('Resume must fit one page; got '+str(len(r.pages)))
 urls=[a.get_object().get('/A',{}).get('/URI') for page in r.pages for a in page.get('/Annots',[])]
-for url in ['https://hsbx9017-dot.github.io/wwtp-simulator/','https://hsbx9017-dot.github.io/xianxue-yidian/']:
+for url in [site_url,'https://hsbx9017-dot.github.io/wwtp-simulator/','https://hsbx9017-dot.github.io/xianxue-yidian/']:
  if url not in urls:raise RuntimeError('Missing project link in PDF')
 print('One-page PDF created; both project hyperlinks verified.')

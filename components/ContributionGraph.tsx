@@ -65,7 +65,7 @@ const ContributionGraph = () => {
       <div className="gh-heatmap min-w-0 flex-1 overflow-x-auto">
         {mounted ? (
           <GitHubCalendar
-            username="yanghao158640"
+            username={profile.githubUser}
             year="last"
             transformData={trimToRecentWeeks}
             colorScheme="dark"
@@ -109,7 +109,7 @@ const ContributionGraph = () => {
       {/* 无障碍：图是纯视觉的，给读屏用户补一句文字事实 */}
       <p className="sr-only">
         {profile.name} 的 GitHub 公开提交热力图，展示最近 {WEEKS} 周的提交频率。
-        数据可在 github.com/yanghao158640 查看。
+        数据可在 github.com/{profile.githubUser} 查看。
       </p>
     </div>
   );
